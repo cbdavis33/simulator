@@ -1,0 +1,496 @@
+---
+title: "Model Flow"
+format:
+  html:
+    code-fold: true  
+    code-summary: "Code"
+    code-tools: true
+    number-sections: true
+    toc-depth: 5
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: package-load
+#| include: true
+#| message: false
+#| warning: false
+#| echo: false
+
+library(mrgsolve)
+library(tidyverse)
+
+```
+
+# Simple Two-Compartment Model with Depot Dosing
+
+## Dosing with Different Regimens and Different Numbers of Dosing Blocks per Regimen
+
+### Inputs
+
+This example assumes that the PMXer has fixed the ```cmt``` for dosing. This 
+should be a fairly common situation, e.g. bictegravir is *only* orally 
+administered.
+
+```{r}
+
+n_dosing_regimens <- 6
+
+input <- vector(mode = "list", length = n_dosing_regimens + 1)
+
+names(input) <- c(str_c("regimen_", 1:n_dosing_regimens), "metadata")
+
+input$metadata$program_name <- "MVP"          # Input after user selects project 
+input$metadata$concentration_units <- "ug/mL" # PMXer input 
+input$metadata$dose_amount_units <- "mg"      # PMXer input 
+input$metadata$time_units <- "h"              # PMXer input 
+input$metadata$include_iiv <- TRUE            # Give the option of including IIV or just simulate the typical values 
+input$metadata$cmt <- 1                       # For this example, PMXer sets this
+
+## Regimen 1
+input$regimen_1$n_dosing_blocks <- 1   # Multiple dosing patterns?
+input$regimen_1$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_1$dose_amount <- 100     # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_1$ii <- 24               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_1$n_doses <- 21
+input$regimen_1$infusion_duration <- 0 # 0 if not IV
+input$regimen_1$waits <- c()           # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+
+## Regimen 2
+input$regimen_2$n_dosing_blocks <- 1   # Multiple dosing patterns?
+input$regimen_2$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_2$dose_amount <- 200     # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_2$ii <- 24               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_2$n_doses <- 21
+input$regimen_2$infusion_duration <- 0 # 0 if not IV
+input$regimen_2$waits <- c()           # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+
+## Regimen 3
+input$regimen_3$n_dosing_blocks <- 4   # Multiple dosing patterns?
+input$regimen_3$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_3$dose_amount <- c(50, 300, 200, 100)   # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_3$ii <- c(12, 24, 24, 24)               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_3$n_doses <- c(2, 6, 5, 7)
+input$regimen_3$infusion_duration <- 0 # 0 if not IV
+input$regimen_3$waits <- c(0, 48, 0)  # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+
+
+## Regimen 4
+input$regimen_4$n_dosing_blocks <- 1  # Multiple dosing patterns?
+input$regimen_4$n_subjects <- 100     # At some point we might want to help them create a virtual population with covariates
+                                      # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_4$dose_amount <- 100    # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_4$ii <- 12              # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_4$n_doses <- 56
+input$regimen_4$infusion_duration <- 0 # 0 if not IV
+input$regimen_4$waits <- c()           # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+
+## Regimen 5
+input$regimen_5$n_dosing_blocks <- 1   # Multiple dosing patterns?
+input$regimen_5$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_5$dose_amount <- 50      # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_5$ii <- 12               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_5$n_doses <- 56
+input$regimen_5$infusion_duration <- 0 # 0 if not IV
+input$regimen_5$waits <- c()           # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+
+
+## Regimen 6
+input$regimen_6$n_dosing_blocks <- 2   # Multiple dosing patterns?
+input$regimen_6$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_6$dose_amount <- c(300, 100)   # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_6$ii <- c(24, 24)        # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_6$n_doses <- c(1, 13)
+input$regimen_6$infusion_duration <- 0 # 0 if not IV
+input$regimen_6$waits <- c(12)         # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+
+```
+
+### Intermediate Values
+
+```{r}
+
+regimens_as_list <- function(i){
+  
+  regimen <- input[[i]]
+  
+  to_return <- vector(mode = "list", length = regimen$n_dosing_blocks)
+  
+  for(j in 1:regimen$n_dosing_blocks){
+    
+    to_return[[j]] <- list(ID = 1:regimen$n_subjects,
+                           amt = regimen$dose_amount[j], 
+                           ii = regimen$ii[j], 
+                           addl = regimen$n_doses[j] - 1, 
+                           cmt = input$metadata$cmt, 
+                           regimen = i)
+    
+  }
+
+  return(to_return)
+  
+}
+
+add_waits_to_events <- function(event){
+  
+  regimen <- unique(event[[1]]$regimen)
+  waits <- input[[regimen]]$waits
+  
+  purrr::reduce2(map(event, as.ev), waits, function(.acc, .next, .wait) {
+    if (!is.list(.acc)) {
+      return(list(.acc, wait = .wait, .next))
+    }
+    return(c(.acc, wait = .wait, ev = .next))
+  })
+  
+}
+
+create_dosing_data <- function(x){
+  
+  tmp <- if(length(x) == 1){
+    x
+  }else{
+    do.call(ev_seq, x)
+  }
+  
+  return(tmp %>% 
+           as_tibble() %>% 
+           arrange(ID, time))
+  
+}
+
+dosing_data <- map(1:n_dosing_regimens, regimens_as_list) %>% 
+  map(\(x) map(x, data.frame)) %>% 
+  map(add_waits_to_events) %>% 
+  map(create_dosing_data) %>% 
+  list_rbind() %>% 
+  group_by(regimen, ID) %>% 
+  mutate(ID = cur_group_id()) %>% 
+  ungroup()
+
+```
+
+### Read Model and Simulate
+
+```{r}
+# build dosing regimen
+# read in model
+# simulate with regimen
+
+mod <- mread("models/mvp_foce/foce.cpp")
+
+Omega <- if(isTRUE(input$metadata$include_iiv)){
+  revar(mod)$omega@data$...
+}else{
+  diag(0, revar(mod)$omega@n)
+}
+
+data <- mod %>% 
+  data_set(dosing_data) %>% 
+  omat(Omega) %>% 
+  mrgsim_df(tgrid = seq(0, 700, by = 0.25), carry_out = "regimen") %>% 
+  mutate(ID = factor(ID),
+         regimen = factor(regimen)) %>% 
+  select(ID, Regimen = regimen, time, IPRED, AUC)
+
+```
+
+
+### Outputs 
+
+#### Export Dataset as .csv
+
+The output as it stands now isn't formatted properly. **WOULD IT BE BETTER TO
+WRITE IT AS A CSV, THEN EXPORT THAT FILE RATHER THAN EXPORTING IT DIRECTLY?**
+
+```{r}
+#| echo: false
+
+data %>% 
+  downloadthis::download_this(
+    output_name = str_glue("{input$metadata$program_name}_data"),
+    output_extension = ".csv",
+    button_label = "Download Simulated Data",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save")
+
+```
+
+#### Plot
+
+```{r}
+
+want_log_scale <- FALSE        # user input (CHECKBOX)
+want_individual_lines <- FALSE # user input (CHECKBOX)
+interval_width <- 0.90         # user input (number between 0 and 1, most likely 0.90, 0.95, or 0.99)
+
+if(isTRUE(want_individual_lines)){
+  
+  data %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED, group = ID, color = ID)) +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$metadata$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$metadata$time_units})"))
+  
+}else{
+  
+  data %>% 
+    group_by(Regimen, time) %>% 
+    tidybayes::median_qi(IPRED, .width = interval_width) %>% 
+    ungroup() %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED), color = "black", linewidth = 1.2) +
+    geom_ribbon(aes(x = time, ymin = .lower, ymax = .upper), alpha = 0.25, 
+                fill = "blue") +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$metadata$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$metadata$time_units})")) +
+    facet_wrap(~Regimen, labeller = label_both)
+  
+}
+
+```
+
+
+# Simple Two-Compartment Model with Some Depot Dosing and Some IV and Some Both
+
+## Dosing with Different Regimens and Different Numbers of Dosing Blocks per Regimen
+
+### Inputs
+
+This example assumes that the user has options for dosing, i.e. the user might 
+want to give an IV dose and then an oral dose or an SC dose and then an oral 
+dose. In these cases, there should be some sort of text that the PMXer has 
+written to tell the user about how to do *cmt*.
+
+```{r}
+
+n_dosing_regimens <- 3
+
+input <- vector(mode = "list", length = n_dosing_regimens + 1)
+
+names(input) <- c(str_c("regimen_", 1:n_dosing_regimens), "metadata")
+
+input$metadata$program_name <- "MVP_2"          # Input after user selects project 
+input$metadata$concentration_units <- "ug/mL" # PMXer input 
+input$metadata$dose_amount_units <- "mg"      # PMXer input 
+input$metadata$time_units <- "h"              # PMXer input 
+input$metadata$include_iiv <- TRUE            # Give the option of including IIV or just simulate the typical values 
+
+## Regimen 1
+input$regimen_1$n_dosing_blocks <- 1   # Multiple dosing patterns?
+input$regimen_1$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_1$dose_amount <- 100     # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_1$ii <- 24               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_1$n_doses <- 21
+input$regimen_1$infusion_duration <- 0 # 0 if not IV
+input$regimen_1$waits <- c()           # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+input$regimen_1$cmt <- 1
+
+## Regimen 2
+input$regimen_2$n_dosing_blocks <- 1   # Multiple dosing patterns?
+input$regimen_2$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_2$dose_amount <- 200     # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_2$ii <- 24               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_2$n_doses <- 21
+input$regimen_2$infusion_duration <- 1 # 0 if not IV
+input$regimen_2$waits <- c()           # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+input$regimen_2$cmt <- 2
+
+## Regimen 3
+input$regimen_3$n_dosing_blocks <- 2   # Multiple dosing patterns?
+input$regimen_3$n_subjects <- 100      # At some point we might want to help them create a virtual population with covariates
+                                       # Also, if include_iiv is FALSE, this should default to 1
+input$regimen_3$dose_amount <- c(300, 100)   # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$regimen_3$ii <- c(24, 24)               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$regimen_3$n_doses <- c(7, 14)
+input$regimen_3$infusion_duration <- c(1, 0) # 0 if not IV
+input$regimen_3$waits <- c(0)  # Make sure length of waits in UI matches so that the user can't mess it up 
+                                       # (length(waits) == n_dosing_blocks - 1)
+input$regimen_3$cmt <- c(2, 1)
+
+```
+
+### Intermediate Values
+
+```{r}
+
+regimens_as_list <- function(i){
+  
+  regimen <- input[[i]]
+  
+  to_return <- vector(mode = "list", length = regimen$n_dosing_blocks)
+  
+  for(j in 1:regimen$n_dosing_blocks){
+    
+    to_return[[j]] <- list(ID = 1:regimen$n_subjects,
+                           amt = regimen$dose_amount[j], 
+                           ii = regimen$ii[j], 
+                           addl = regimen$n_doses[j] - 1, 
+                           cmt = regimen$cmt[j], 
+                           tinf = regimen$infusion_duration[j],
+                           regimen = i)
+    
+  }
+
+  return(to_return)
+  
+}
+
+add_waits_to_events <- function(event){
+  
+  regimen <- unique(event[[1]]$regimen)
+  waits <- input[[regimen]]$waits
+  
+  purrr::reduce2(map(event, as.ev), waits, function(.acc, .next, .wait) {
+    if (!is.list(.acc)) {
+      return(list(.acc, wait = .wait, .next))
+    }
+    return(c(.acc, wait = .wait, ev = .next))
+  })
+  
+}
+
+create_dosing_data <- function(x){
+  
+  tmp <- if(length(x) == 1){
+    x
+  }else{
+    do.call(ev_seq, x)
+  }
+  
+  return(tmp %>% 
+           as_tibble() %>% 
+           arrange(ID, time))
+  
+}
+
+dosing_data <- map(1:n_dosing_regimens, regimens_as_list) %>% 
+  map(\(x) map(x, data.frame)) %>% 
+  map(add_waits_to_events) %>% 
+  map(create_dosing_data) %>% 
+  list_rbind() %>% 
+  group_by(regimen, ID) %>% 
+  mutate(ID = cur_group_id()) %>% 
+  ungroup()
+
+```
+
+### Read Model and Simulate
+
+```{r}
+# build dosing regimen
+# read in model
+# simulate with regimen
+
+mod <- mread("models/mvp_foce/foce.cpp")
+
+Omega <- if(isTRUE(input$metadata$include_iiv)){
+  revar(mod)$omega@data$...
+}else{
+  diag(0, revar(mod)$omega@n)
+}
+
+data <- mod %>% 
+  data_set(dosing_data) %>% 
+  omat(Omega) %>% 
+  mrgsim_df(tgrid = seq(0, 700, by = 0.25), carry_out = "regimen") %>% 
+  mutate(ID = factor(ID),
+         regimen = factor(regimen)) %>% 
+  select(ID, Regimen = regimen, time, IPRED, AUC)
+
+```
+
+
+### Outputs 
+
+#### Export Dataset as .csv
+
+The output as it stands now isn't formatted properly. **WOULD IT BE BETTER TO
+WRITE IT AS A CSV, THEN EXPORT THAT FILE RATHER THAN EXPORTING IT DIRECTLY?**
+
+```{r}
+#| echo: false
+
+data %>% 
+  downloadthis::download_this(
+    output_name = str_glue("{input$metadata$program_name}_data"),
+    output_extension = ".csv",
+    button_label = "Download Simulated Data",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save")
+
+```
+
+#### Plot
+
+```{r}
+
+want_log_scale <- FALSE        # user input (CHECKBOX)
+want_individual_lines <- FALSE # user input (CHECKBOX)
+interval_width <- 0.90         # user input (number between 0 and 1, most likely 0.90, 0.95, or 0.99)
+
+if(isTRUE(want_individual_lines)){
+  
+  data %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED, group = ID, color = Regimen)) +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$metadata$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$metadata$time_units})"))
+  
+}else{
+  
+  data %>% 
+    group_by(Regimen, time) %>% 
+    tidybayes::median_qi(IPRED, .width = interval_width) %>% 
+    ungroup() %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED), color = "black", linewidth = 1.2) +
+    geom_ribbon(aes(x = time, ymin = .lower, ymax = .upper), alpha = 0.25, 
+                fill = "blue") +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$metadata$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$metadata$time_units})")) +
+    facet_wrap(~Regimen, labeller = label_both)
+  
+}
+
+```
+
+

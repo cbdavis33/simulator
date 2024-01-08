@@ -1,0 +1,339 @@
+---
+title: "Model Flow"
+format:
+  html:
+    code-fold: true  
+    code-summary: "Code"
+    code-tools: true
+    number-sections: true
+    toc-depth: 5
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: package-load
+#| include: true
+#| message: false
+#| warning: false
+#| echo: false
+
+library(mrgsolve)
+library(tidyverse)
+
+```
+
+# Simple Two-Compartment Model with Depot Dosing
+
+## Single Dosing Block
+
+### Inputs
+
+```{r}
+
+input <- list()
+
+input$program_name <- "MVP"          # Input after user selects project 
+input$concentration_units <- "ug/mL" # PMXer input 
+input$dose_amount_units <- "mg"      # PMXer input 
+input$time_units <- "h"              # PMXer input 
+
+input$n_dosing_blocks <- 1   # Multiple regimens?
+input$n_subjects <- 100     # At some point we might want to help them create a virtual population with covariates   
+input$dose_amount <- 200     # Need units (mg, ug) on app, and it can vary according to drug. PMxer should set it up so that it makes sense
+input$ii <- 24               # Need units on app (h, d), and it can vary according to drug. PMxer should set it up so that it makes sense 
+input$n_doses <- 14
+input$infusion_duration <- 0 # 0 if not IV
+
+input$include_iiv <- TRUE    # Give the option of including IIV or just simulate the typical values  
+
+# Need text that the PMXer writes to talk about how to do cmt, or possibly have
+# PMXer give a default and no option to the user
+cmt <- 1 
+
+```
+
+### Intermediate Values
+
+```{r}
+# this is a hypothetical example of how to store more complicated setups where 
+# you may use the UI to incrementally build up multiple regimens, it does not 
+# need to be used for the MVP, but keeping it here for now. I'd suggest we start
+# with just directly referring to dose and ii
+
+rv <- list()
+rv$doses <- list(list(ID = 1:input$n_subjects,
+                      amt = input$dose_amount[1], ii = input$ii[1], 
+                      addl = input$n_doses[1] - 1, cmt = cmt))
+
+zxc <- map(rv$doses, data.frame) %>% 
+  map(as.ev)
+
+## Map across the list to create the dosing regimen
+## Should we print it and ask "Is this what you want?"
+```
+
+```{r}
+
+# Make sure length of waits in UI matches so that the user can't mess it up 
+# (length(waits) == n_dosing_blocks - 1)
+waits <- c()
+
+res <- purrr::reduce2(zxc, waits, function(.acc, .next, .wait) {
+  if (!is.list(.acc)) {
+    return(list(.acc, wait = .wait, .next))
+  }
+  return(c(.acc, wait = .wait, ev = .next))
+})
+
+dosing_data <- if(length(res) == 1){
+  res
+}else{
+  do.call(ev_seq, res)
+} %>% 
+  as_tibble() %>% 
+  arrange(ID, time)
+
+```
+
+### Read Model and Simulate
+
+```{r}
+# read in model
+# simulate with regimen
+
+mod <- mread("models/mvp_foce/foce.cpp")
+
+Omega <- revar(mod)$omega@data$...
+# Omega <- if_else(isTRUE(input$include_iiv), Omega, diag(0, revar(mod)$omega@n))
+
+Omega <- if(isTRUE(input$include_iiv)){
+  Omega
+}else{
+  diag(0, revar(mod)$omega@n)
+}
+
+data <- mod %>% 
+  data_set(dosing_data) %>% 
+  omat(Omega) %>% 
+  mrgsim_df(tgrid = seq(0, 168, by = 0.25)) %>% 
+  mutate(ID = factor(ID)) 
+
+```
+
+
+### Outputs 
+
+#### Export Dataset as .csv
+
+```{r}
+#| echo: false
+
+# This needs work to get the data into the correct format
+
+data %>% 
+  downloadthis::download_this(
+    output_name = str_glue("{input$program_name}_data"),
+    output_extension = ".csv",
+    button_label = "Download Simulated Data",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save")
+
+```
+
+#### Plot
+
+```{r}
+
+want_log_scale <- FALSE        # user input (CHECKBOX)
+want_individual_lines <- FALSE # user input (CHECKBOX)
+
+if(isTRUE(want_individual_lines)){
+  
+  data %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED, group = ID, color = ID)) +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$time_units})"))
+  
+}else{
+  
+  data %>% 
+    group_by(time) %>% 
+    tidybayes::median_qi(IPRED, .width = 0.90) %>% 
+    ungroup() %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED), color = "black", linewidth = 1.2) +
+    geom_ribbon(aes(x = time, ymin = .lower, ymax = .upper), alpha = 0.25, 
+                fill = "blue") +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$time_units})"))
+  
+}
+
+```
+
+
+## Multiple Dosing Blocks
+
+### Inputs
+
+```{r}
+
+input <- list()
+
+input$concentration_units <- "ug/mL" # User input in textbox (or possibly dropdown menu?)
+input$dose_amount_units <- "mg"      # User input in textbox (or possibly dropdown menu?)
+input$time_units <- "h"              # User input in textbox (or possibly dropdown menu?)
+
+input$n_dosing_blocks <- 3   # Multiple regimens?
+input$n_subjects <- 10     # At some point we might want to help them create a virtual population    
+input$dose_amount <- c(1000, 600, 200)     # Need units (mg, ug) on app, and it can vary according to drug.
+                                           # PMxer should set it up so that it makes sense
+input$ii <- c(12, 24, 168) # Need units on app (h, d), and it can vary according to drug. 
+                           # PMxer should set it up so that it makes sense 
+input$n_doses <- c(2, 5, 7)
+input$infusion_duration <- 0 # 0 if not IV
+
+input$include_iiv <- TRUE    # Give the option of including IIV or just simulate the typical values  
+
+# Need text that the PMXer writes to talk about how to do cmt, or possibly have
+# PMXer give a default and no option to the user
+cmt <- 1 
+
+```
+
+### Intermediate Values
+
+```{r}
+# this is a hypothetical example of how to store more complicated setups where 
+# you may use the UI to incrementally build up multiple regimens, it does not 
+# need to be used for the MVP, but keeping it here for now. I'd suggest we start
+# with just directly referring to dose and ii
+
+rv <- list()
+rv$doses <- list(list(ID = 1:input$n_subjects,
+                      amt = input$dose_amount[1], ii = input$ii[1], 
+                      addl = input$n_doses[1] - 1, cmt = cmt), 
+                 list(ID = 1:input$n_subjects,
+                      amt = input$dose_amount[2], ii = input$ii[2], 
+                      addl = input$n_doses[2] - 1, cmt = cmt), 
+                 list(ID = 1:input$n_subjects,
+                      amt = input$dose_amount[3], ii = input$ii[3], 
+                      addl = input$n_doses[3] - 1, cmt = cmt))
+
+zxc <- map(rv$doses, data.frame) %>% 
+  map(as.ev)
+
+## Map across the list to create the dosing regimen
+## Should we print it and ask "Is this what you want?"
+```
+
+```{r}
+
+# Make sure length of waits in UI matches so that the user can't mess it up 
+# (length(waits) == n_dosing_blocks - 1)
+waits <- c(24, 168)
+
+res <- purrr::reduce2(zxc, waits, function(.acc, .next, .wait) {
+  if (!is.list(.acc)) {
+    return(list(.acc, wait = .wait, .next))
+  }
+  return(c(.acc, wait = .wait, ev = .next))
+})
+
+dosing_data <- if(length(res) == 1){
+  res
+}else{
+  do.call(ev_seq, res)
+} %>% 
+  as_tibble() %>% 
+  arrange(ID, time)
+
+```
+
+### Read Model and Simulate
+
+```{r}
+# build dosing regimen
+# read in model
+# simulate with regimen
+
+mod <- mread("models/mvp_foce/foce.cpp")
+
+Omega <- revar(mod)$omega@data$...
+# Omega <- ifelse(isTRUE(input$include_iiv), Omega, diag(0, revar(mod)$omega@n))
+
+Omega <- if(isTRUE(input$include_iiv)){
+  Omega
+}else{
+  diag(0, revar(mod)$omega@n)
+}
+
+data <- mod %>% 
+  data_set(dosing_data) %>% 
+  omat(Omega) %>% 
+  mrgsim_df(tgrid = seq(0, 1680, by = 0.25), carry_out = "AMT") %>% 
+  mutate(ID = factor(ID)) 
+
+```
+
+
+### Outputs 
+
+#### Export Dataset as .csv
+
+#### Plot
+
+```{r}
+
+want_log_scale <- FALSE # user input
+want_individual_lines <- FALSE # user input
+
+if(isTRUE(want_individual_lines)){
+  
+  data %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED, group = ID, color = ID)) +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$time_units})"))
+  
+}else{
+  
+  data %>% 
+    group_by(time) %>% 
+    tidybayes::median_qi(IPRED, .width = 0.90) %>% 
+    ungroup() %>% 
+    ggplot() + 
+    geom_line(aes(x = time, y = IPRED), color = "black", linewidth = 1.2) +
+    geom_ribbon(aes(x = time, ymin = .lower, ymax = .upper), alpha = 0.25, 
+                fill = "blue") +
+    theme_bw() +
+    scale_y_continuous(name = str_glue("Drug Conc. ({input$concentration_units})"),
+                       trans = if_else(isTRUE(want_log_scale), 
+                                       "log10",
+                                       "identity")) +
+    scale_x_continuous(name = 
+                         str_glue("Time ({input$time_units})"))
+  
+}
+
+```
+
+
